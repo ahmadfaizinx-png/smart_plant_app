@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Plant Monitoring</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; background: #0b1220; color: #ffffff; padding: 20px; }
+    .container { max-width: 1100px; margin: auto; }
+    .header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; margin-bottom: 25px; }
+    .logo { color: #4ade80; font-size: 24px; font-weight: bold; }
+    .online { background: #123d2c; color: #4ade80; padding: 10px 15px; border-radius: 20px; font-size: 13px; }
+    .hero { background: linear-gradient(135deg,#123c30,#123047); padding: 25px; border-radius: 18px; margin-bottom: 22px; }
+    .hero h1 { font-size: 25px; margin-bottom: 10px; }
+    .hero p { color: #b9c9d5; line-height: 1.6; }
+    .grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 15px; margin-bottom: 22px; }
+    .card { background: #151f30; padding: 20px; border-radius: 16px; border: 1px solid #25334a; }
+    .card h3 { font-size: 14px; color: #a8b6c8; margin-bottom: 15px; }
+    .value { font-size: 32px; font-weight: bold; margin-bottom: 8px; }
+    .green { color: #4ade80; }
+    .blue { color: #38bdf8; }
+    .orange { color: #fbbf24; }
+    .status { font-size: 13px; color: #9eacbd; }
+    .section { margin-bottom: 22px; }
+    .section h2 { font-size: 19px; margin-bottom: 15px; }
+    .chart-card { background: #151f30; padding: 20px; border-radius: 16px; border: 1px solid #25334a; }
+    canvas { width: 100%; height: 260px; }
+    .legend { display: flex; flex-wrap: wrap; gap: 15px; margin-top: 12px; font-size: 12px; color: #cbd5e1; }
+    .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; }
+    .controls { display: grid; grid-template-columns: repeat(2,1fr); gap: 15px; }
+    button { width: 100%; padding: 15px; border: none; border-radius: 12px; font-weight: bold; font-size: 15px; cursor: pointer; margin-top: 12px; }
+    .auto-btn { background: #16a34a; color: white; }
+    .manual-btn { background: #2563eb; color: white; }
+    .pump-on { background: #16a34a; color: white; }
+    .pump-off { background: #dc2626; color: white; }
+    .alert { background: #422b13; border: 1px solid #a16207; color: #fbbf24; padding: 15px; border-radius: 12px; margin-bottom: 20px; display: none; line-height: 1.5; }
+    .toast { position: fixed; bottom: 20px; right: 20px; left: 20px; max-width: 400px; margin-left: auto; background: #166534; color: white; padding: 17px; border-radius: 12px; display: none; z-index: 10; box-shadow: 0 5px 25px #0008; }
+    .footer { text-align: center; color: #718096; padding: 25px; font-size: 12px; }
+    @media(max-width:650px) {
+      .grid { grid-template-columns: 1fr; }
+      .controls { grid-template-columns: 1fr; }
+      .hero h1 { font-size: 21px; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <div class="header">
+    <div class="logo">🌱 SMART PLANT</div>
+    <div class="online" id="connectionStatus">● MENGHUBUNGKAN...</div>
+  </div>
+
+  <div class="hero">
+    <h1>Plant Health Dashboard</h1>
+    <p>Sistem monitoring kesehatan tanaman dan penyiraman otomatis berbasis IoT (MQTT Cloud).</p>
+  </div>
+
+  <div class="alert" id="warning">
+    ⚠️ PERINGATAN KONDISI UDARA!
+    <div id="warningText">Kondisi suhu atau kelembapan udara tidak ideal untuk tanaman.</div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h3>🌱 KELEMBAPAN TANAH</h3>
+      <div class="value green"><span id="soil">0</span>%</div>
+      <div class="status" id="soilStatus">Membaca sensor...</div>
+    </div>
+    <div class="card">
+      <h3>💧 KELEMBAPAN UDARA</h3>
+      <div class="value blue"><span id="humidity">0</span>%</div>
+      <div class="status">Sensor DHT11</div>
+    </div>
+    <div class="card">
+      <h3>🌡️ SUHU UDARA</h3>
+      <div class="value orange"><span id="temperature">0</span>°C</div>
+      <div class="status">Sensor DHT11</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>📊 Grafik Kesehatan Tanaman</h2>
+    <div class="chart-card">
+      <canvas id="chart"></canvas>
+      <div class="legend">
+        <span><i class="dot" style="background:#4ade80"></i> Tanah</span>
+        <span><i class="dot" style="background:#38bdf8"></i> Udara</span>
+        <span><i class="dot" style="background:#fbbf24"></i> Suhu</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>⚙️ Kontrol Penyiraman</h2>
+    <div class="controls">
+      <div class="card">
+        <h3>MODE SISTEM</h3>
+        <div class="value green" id="mode">OTOMATIS</div>
+        <div class="status">Pengaturan sistem penyiraman</div>
+        <button class="auto-btn" onclick="setMode(true)">MODE OTOMATIS</button>
+        <button class="manual-btn" onclick="setMode(false)">MODE MANUAL</button>
+      </div>
+      <div class="card">
+        <h3>STATUS POMPA</h3>
+        <div class="value" id="pump">MATI</div>
+        <div class="status" id="pumpStatus">Pompa belum aktif</div>
+        <button class="pump-on" onclick="setPump(true)">NYALAKAN POMPA</button>
+        <button class="pump-off" onclick="setPump(false)">MATIKAN POMPA</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    SMART PLANT MONITORING SYSTEM <br><br> VERCEL & MQTT CLOUD
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  const brokerUrl = "wss://broker.hivemq.com:8884/mqtt";
+  const TOPIC_DATA = "smartplant/data";
+  const TOPIC_MODE = "smartplant/mode";
+  const TOPIC_PUMP = "smartplant/pump";
+
+  let client = mqtt.connect(brokerUrl);
+  let lastPump = false;
+  let lastWarning = false;
+  let firstLoad = true;
+
+  function showToast(message) {
+    const toast = document.getElementById("toast");
+    toast.innerText = message;
+    toast.style.display = "block";
+    setTimeout(() => { toast.style.display = "none"; }, 4000);
+  }
+
+  client.on("connect", () => {
+    document.getElementById("connectionStatus").innerText = "● MQTT ONLINE";
+    client.subscribe(TOPIC_DATA);
+  });
+
+  client.on("error", (err) => {
+    document.getElementById("connectionStatus").innerText = "● KONEKSI GAGAL";
+    console.error(err);
+  });
+
+  client.on("message", (topic, payload) => {
+    if (topic === TOPIC_DATA) {
+      try {
+        const data = JSON.parse(payload.toString());
+
+        document.getElementById("soil").innerText = data.soil;
+        document.getElementById("humidity").innerText = data.dhtValid ? data.humidity.toFixed(1) : "--";
+        document.getElementById("temperature").innerText = data.dhtValid ? data.temperature.toFixed(1) : "--";
+        document.getElementById("mode").innerText = data.auto ? "OTOMATIS" : "MANUAL";
+
+        document.getElementById("pump").innerText = data.pump ? "MENYIRAM" : "MATI";
+        document.getElementById("pump").style.color = data.pump ? "#4ade80" : "#f87171";
+        document.getElementById("pumpStatus").innerText = data.pump ? "Pompa sedang bekerja" : "Pompa tidak aktif";
+        document.getElementById("soilStatus").innerText = data.soil < 50 ? "Tanah kering" : "Kelembapan mencukupi";
+
+        if (!firstLoad && data.pump && !lastPump) showToast("💧 Penyiraman tanaman dimulai!");
+        if (!firstLoad && data.warning && !lastWarning) showToast("⚠️ Peringatan! Kondisi udara buruk!");
+
+        document.getElementById("warning").style.display = data.warning ? "block" : "none";
+        document.getElementById("warningText").innerText = !data.dhtValid
+          ? "Sensor DHT11 tidak terbaca."
+          : `Suhu: ${data.temperature.toFixed(1)}°C | Kelembapan udara: ${data.humidity.toFixed(1)}%`;
+
+        lastPump = data.pump;
+        lastWarning = data.warning;
+        firstLoad = false;
+
+        soilData.push(data.soil);
+        humidityData.push(data.dhtValid ? data.humidity : 0);
+        temperatureData.push(data.dhtValid ? (data.temperature / 50) * 100 : 0);
+
+        if (soilData.length > 30) {
+          soilData.shift();
+          humidityData.shift();
+          temperatureData.shift();
+        }
+        drawChart();
+
+      } catch(e) {
+        console.error("Gagal parsing JSON:", e);
+      }
+    }
+  });
+
+  function setMode(value) {
+    const payload = JSON.stringify({ auto: value ? 1 : 0 });
+    client.publish(TOPIC_MODE, payload);
+    showToast(value ? "Mengirim mode otomatis..." : "Mengirim mode manual...");
+  }
+
+  function setPump(value) {
+    const payload = JSON.stringify({ state: value ? 1 : 0 });
+    client.publish(TOPIC_PUMP, payload);
+    showToast(value ? "Mengirim perintah nyalakan pompa..." : "Mengirim perintah matikan pompa...");
+  }
+
+  let soilData = [];
+  let humidityData = [];
+  let temperatureData = [];
+  const canvas = document.getElementById("chart");
+  const ctx = canvas.getContext("2d");
+
+  function drawChart() {
+    const w = canvas.clientWidth;
+    const h = 260;
+    canvas.width = w * devicePixelRatio;
+    canvas.height = h * devicePixelRatio;
+    ctx.scale(devicePixelRatio, devicePixelRatio);
+    ctx.clearRect(0, 0, w, h);
+
+    const left = 35, right = w - 10, top = 15, bottom = h - 25;
+    ctx.strokeStyle = "#334155";
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = "11px Arial";
+
+    for (let i = 0; i <= 4; i++) {
+      let y = top + (bottom - top) * i / 4;
+      ctx.beginPath();
+      ctx.moveTo(left, y);
+      ctx.lineTo(right, y);
+      ctx.stroke();
+      ctx.fillText((100 - i * 25) + "%", 2, y + 4);
+    }
+
+    function drawLine(data, color) {
+      if (data.length < 2) return;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      data.forEach((value, index) => {
+        let x = left + (right - left) * index / (data.length - 1);
+        let y = bottom - (Math.min(100, Math.max(0, value)) / 100) * (bottom - top);
+        if (index === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+
+    drawLine(soilData, "#4ade80");
+    drawLine(humidityData, "#38bdf8");
+    drawLine(temperatureData, "#fbbf24");
+  }
+
+  window.addEventListener("resize", drawChart);
+</script>
+
+</body>
+</html>
